@@ -1,0 +1,25 @@
+SELECT
+	wo.ProductID,
+	FORMAT(p.StandardCost,'C','EN-US') 'StdProductCost',
+	SUM(wo.ScrappedQty) 'TotalScrappedQty',
+	FORMAT(SUM(wo.ScrappedQty)*p.StandardCost, 'C', 'EN-US') 'TotalScrappedCost',
+	SUM(WO.OrderQty) 'OrderQty',
+	SUM(CAST(wo.ScrappedQty AS decimal)) / SUM(CAST(wo.OrderQty AS decimal))*100 '%Yield',
+	DATEPART(MONTH,wo.EndDate) 'Month',
+	DATEPART(YEAR,wo.EndDate) 'Year'
+FROM
+	Production.WorkOrder wo
+JOIN
+	Production.Product p
+	ON wo.ProductID = p.ProductID
+WHERE
+	wo.ScrappedQty <> 0 AND p.StandardCost <> 0
+GROUP BY
+	wo.ProductID,
+	p.StandardCost,
+	DATEPART(MONTH,wo.EndDate),
+	DATEPART(YEAR,wo.EndDate)
+ORDER BY
+	DATEPART(YEAR,wo.EndDate) DESC,
+	DATEPART(MONTH,wo.EndDate) DESC,
+	'TotalScrappedCost' DESC;

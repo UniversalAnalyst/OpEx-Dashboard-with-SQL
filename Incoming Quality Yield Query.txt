@@ -1,0 +1,23 @@
+SELECT
+	p.Name,
+	SUM(po.ReceivedQty) 'TotalReceivedQty',
+	SUM(po.RejectedQty) 'TotalRejectedQty',
+	(SUM(po.RejectedQty) / SUM(po.ReceivedQty))*100 '%Yield',
+	DATEPART(MONTH,po.ModifiedDate) 'Month',
+	DATEPART(YEAR,po.ModifiedDate) 'Year'
+FROM
+	Purchasing.PurchaseOrderDetail po
+JOIN
+	Production.Product p
+	ON po.ProductID = p.ProductID
+
+GROUP BY
+	p.Name,
+	DATEPART(MONTH,po.ModifiedDate),
+	DATEPART(YEAR,po.ModifiedDate)
+HAVING
+	SUM(po.RejectedQty) > 0
+ORDER BY
+	DATEPART(YEAR,po.ModifiedDate) DESC,
+	DATEPART(MONTH,po.ModifiedDate) DESC,
+	'%Yield' DESC;

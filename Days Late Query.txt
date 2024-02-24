@@ -1,0 +1,19 @@
+SELECT
+	p.Name,
+	AVG(DATEDIFF(day,wor.ScheduledEndDate,wor.ActualEndDate)) 'AVG Days Late',
+	DATEPART(MONTH,wor.ActualEndDate) 'Month',
+	DATEPART(YEAR,wor.ActualEndDate) 'Year'
+FROM
+	Production.WorkOrderRouting wor
+JOIN
+	Production.Product p
+	ON wor.ProductID = p.ProductID
+GROUP BY
+	p.Name,
+	DATEPART(MONTH,wor.ActualEndDate),
+	DATEPART(YEAR,wor.ActualEndDate)
+
+ORDER BY
+	DATEPART(YEAR,wor.ActualEndDate) DESC,
+	DATEPART(MONTH,wor.ActualEndDate) DESC,
+	'AVG Days Late' DESC

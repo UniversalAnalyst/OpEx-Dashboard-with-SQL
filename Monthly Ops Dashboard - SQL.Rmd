@@ -1,0 +1,204 @@
+---
+title: "SQL Queries for Adventureworks OpEx Dashboard Development"
+author: "Michael E. Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Introduction
+
+The following queries were written in Microsoft SQL Server Management Studio using SQL Server Express.  
+The datatables were sourced from Microsoft's Learning SQL Docs website: https://learn.microsoft.com/en-us/sql/samples/
+The specfic tables from the sample database can be found in my Kaggle dataset: https://www.kaggle.com/datasets/universalanalyst/adventureworks-sample-mfg-database-tables
+
+
+### Objective
+
+The objective of the queries is to extract meaningful data that can be fed into an informative monthly Operations dashboard.  The dashboard's aim is to inform plant leadership of the status of monthly KPIs (Key Performance Indicators), both for recent and moving average month data over time. Additionally, results from the queries should be manipulable to identify parts and processes with the highest monthly Quality, Cost, and Delivery issues.  This allows technical support and sustaining engineering teams to carry out continuous improvement initiatives with the highest impact to the business.
+
+The Tableau Monthly Ops Dashboard can be found on my Tableau Public page: https://public.tableau.com/app/profile/michael.brown7604/viz/MonthlyOpsDashboard/OpExDash_1
+
+### Install Packages
+
+```{r install packages, echo=FALSE}
+
+install.packages("DBI", repos = "http://cran.us.r-project.org")
+install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+```
+
+### Connection to SQL Server
+
+```{r server connection, echo=FALSE}
+library(DBI)
+library(tidyverse)
+con <- dbConnect(odbc::odbc(), "SQL Server")
+```
+
+###  Cost of Production
+
+Every part that is manufactured is recorded in the transaction history.  As the aim of the dashboard is to give a monthly report of the production costs, the data of interest here are the actual cost of production of each manufacturing event and when they occurred.  All costs are summed for each month of each year.
+
+Note:  While the definition of cost of production varies by company, typical manufacturing factors include overhead, raw materials, labor, quality control such as inspection, and rework/overproduction due to scrap.
+
+```{sql connection=con, output.var = "prod"}
+SELECT
+	FORMAT(SUM(th.ActualCost),'C','EN-US') AS 'ActualCost',
+	DATEPART(MONTH,th.TransactionDate) 'Month',
+	DATEPART(YEAR, th.TransactionDate) 'Year'
+FROM
+	AdventureWorks2019.Production.TransactionHistory th
+GROUP BY
+	DATEPART(MONTH,th.TransactionDate),
+	DATEPART(YEAR, th.TransactionDate)
+ORDER BY
+	DATEPART(YEAR, th.TransactionDate) DESC,
+	DATEPART(MONTH,th.TransactionDate) DESC
+```    
+
+
+
+###  Cost of In-House Manufacturing Scrap
+
+Speaking of scrap, the query below is aimed at communicating the scrapped quantity and costs for the month and year.  As a bonus, percent yield (number of parts with acceptable quality produced over total quantity produced) is calculated.
+
+```{sql connection=con, output.var = "scrap"}
+SELECT
+	wo.ProductID,
+	FORMAT(p.StandardCost,'C','EN-US') 'StdProductCost',
+	SUM(wo.ScrappedQty) 'TotalScrappedQty',
+	FORMAT(SUM(wo.ScrappedQty)*p.StandardCost, 'C', 'EN-US') 'TotalScrappedCost',
+	SUM(WO.OrderQty) 'OrderQty',
+	SUM(CAST(wo.ScrappedQty AS decimal)) / SUM(CAST(wo.OrderQty AS decimal))*100 '%Yield',
+	DATEPART(MONTH,wo.EndDate) 'Month',
+	DATEPART(YEAR,wo.EndDate) 'Year'
+FROM
+	AdventureWorks2019.Production.WorkOrder wo
+JOIN
+	AdventureWorks2019.Production.Product p
+	ON wo.ProductID = p.ProductID
+WHERE
+	wo.ScrappedQty <> 0 AND p.StandardCost <> 0
+GROUP BY
+	wo.ProductID,
+	p.StandardCost,
+	DATEPART(MONTH,wo.EndDate),
+	DATEPART(YEAR,wo.EndDate)
+ORDER BY
+	DATEPART(YEAR,wo.EndDate) DESC,
+	DATEPART(MONTH,wo.EndDate) DESC,
+	'TotalScrappedCost' DESC;
+```
+
+
+###  Conversion Loss
+
+Conversion Loss in this context is defined as the portion of production costs that wind up going into scrap.  It is a measure of how well the plant utilized its costs when producing finished goods.  A high conversion loss percentage indicates that a high amount of costs were used to accommodate operational waste.  Other examples of factors contributing to conversion loss (but not used in this dataset) include reworked and discarded (unusable, non mfg related) material.
+
+The query below joins two subqueries and creates a percentage from the outputs.
+
+```{sql connection=con, output.var = "conv"}
+SELECT
+	FORMAT(ac.ActualCost,'C','EN-US') 'ProductionCost',
+	FORMAT(sc.ScrapCost, 'C','EN-US') AS 'TotalScrapCost',
+	(sc.ScrapCost/ac.ActualCost)*100 'ConversionLoss (%Scrap)',
+	ac.Month 'Month',
+	ac.Year 'Year'
+FROM
+	(SELECT
+		SUM(th.ActualCost) AS 'ActualCost',
+		DATEPART(MONTH,th.TransactionDate) 'Month',
+		DATEPART(YEAR, th.TransactionDate) 'Year'
+	FROM
+		AdventureWorks2019.Production.TransactionHistory th
+	GROUP BY
+		DATEPART(MONTH,th.TransactionDate),
+		DATEPART(YEAR, th.TransactionDate)) AS ac
+JOIN
+	(SELECT
+		SUM(wo.ScrappedQty*p.StandardCost) 'ScrapCost',
+		DATEPART(MONTH,wo.EndDate) 'Month',
+		DATEPART(YEAR,wo.EndDate) 'Year'
+	FROM
+		AdventureWorks2019.Production.WorkOrder wo
+	JOIN
+		AdventureWorks2019.Production.Product p
+		ON wo.ProductID = p.ProductID
+	WHERE
+		wo.ScrappedQty <> 0 AND p.StandardCost <> 0
+	GROUP BY
+		DATEPART(MONTH,wo.EndDate),
+		DATEPART(YEAR,wo.EndDate)) AS sc
+	ON ac.Month = sc.Month AND ac.Year = sc.Year
+ORDER BY
+	ac.Year DESC,
+	ac.Month DESC
+```
+
+
+###  Work Orders Over Seven Days Late
+
+Another typical key performance indicator for manufacturing plants involves timeliness in committed delivery leadtimes.  The AdventureWorks database contains a table that records scheduled and actual work order dates.  When joined with the product table, information on which product work orders were over seven days late can be identified fed into the dashboard, allowing leadership to identify and correct potential process bottlenecks.
+
+```{sql connection=con, output.var = "late"}
+SELECT
+	p.Name,
+	AVG(DATEDIFF(day,wor.ScheduledEndDate,wor.ActualEndDate)) 'AVG Days Late',
+	DATEPART(MONTH,wor.ActualEndDate) 'Month',
+	DATEPART(YEAR,wor.ActualEndDate) 'Year'
+FROM
+	AdventureWorks2019.Production.WorkOrderRouting wor
+JOIN
+	AdventureWorks2019.Production.Product p
+	ON wor.ProductID = p.ProductID
+GROUP BY
+	p.Name,
+	DATEPART(MONTH,wor.ActualEndDate),
+	DATEPART(YEAR,wor.ActualEndDate)
+
+ORDER BY
+	DATEPART(YEAR,wor.ActualEndDate) DESC,
+	DATEPART(MONTH,wor.ActualEndDate) DESC,
+	'AVG Days Late' DESC
+```
+
+
+###  Incoming Supplier Quality Rejects
+
+Lastly, understanding and correcting supplier quality issues is a normal activity in manufacturing companies.  The query below can used to communicate monthly information on parts received from upstream suppliers that have delivered less than 100% passing incoming quality acceptance of their lot.
+
+```{sql connection=con, output.var = "qual"}
+SELECT
+	p.Name,
+	SUM(po.ReceivedQty) 'TotalReceivedQty',
+	SUM(po.RejectedQty) 'TotalRejectedQty',
+	(SUM(po.RejectedQty) / SUM(po.ReceivedQty))*100 '%Yield',
+	DATEPART(MONTH,po.ModifiedDate) 'Month',
+	DATEPART(YEAR,po.ModifiedDate) 'Year'
+FROM
+	AdventureWorks2019.Purchasing.PurchaseOrderDetail po
+JOIN
+	AdventureWorks2019.Production.Product p
+	ON po.ProductID = p.ProductID
+
+GROUP BY
+	p.Name,
+	DATEPART(MONTH,po.ModifiedDate),
+	DATEPART(YEAR,po.ModifiedDate)
+HAVING
+	SUM(po.RejectedQty) > 0
+ORDER BY
+	DATEPART(YEAR,po.ModifiedDate) DESC,
+	DATEPART(MONTH,po.ModifiedDate) DESC,
+	'%Yield' DESC
+```
+
+###  Conclusion
+
+Results-set from the above queries create small tables that can imported into data visualization applications for building a simple Monthly Operations dashboard.  In the ideal sense, as information is entered into the database, the queries can generate data automatically to the dashboard for dynamic updating.
+
+Having the ability to use Microsofts AdventureWorks sample database for practice in developing a semi-realistic dashboard was a true pleasure.

@@ -1,0 +1,12 @@
+SELECT
+	FORMAT(SUM(th.ActualCost),'C','EN-US') AS 'ActualCost',
+	DATEPART(MONTH,th.TransactionDate) 'Month',
+	DATEPART(YEAR, th.TransactionDate) 'Year'
+FROM
+	Production.TransactionHistory th
+GROUP BY
+	DATEPART(MONTH,th.TransactionDate),
+	DATEPART(YEAR, th.TransactionDate)
+ORDER BY
+	DATEPART(YEAR, th.TransactionDate) DESC,
+	DATEPART(MONTH,th.TransactionDate) DESC
